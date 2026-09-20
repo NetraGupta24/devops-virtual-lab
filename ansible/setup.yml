@@ -1,0 +1,70 @@
+---
+- name: Configure DevOps Server
+  hosts: servers
+  become: yes
+
+  tasks:
+
+    - name: Update apt packages
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - conntrack
+        state: present
+
+    - name: Start Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Download Minikube
+      get_url:
+        url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+
+    - name: Download kubectl
+      get_url:
+        url: https://dl.k8s.io/release/v1.33.0/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+
+    - name: Display Docker version
+      debug:
+        var: docker_version.stdout
+
+    - name: Verify Minikube installation
+      command: minikube version
+      register: minikube_version
+
+    - name: Display Minikube version
+      debug:
+        var: minikube_version.stdout
+
+    - name: Verify kubectl installation
+      command: kubectl version --client
+      register: kubectl_version
+
+    - name: Display kubectl version
+      debug:
+        var: kubectl_version.stdout
