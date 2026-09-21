@@ -1,4 +1,11 @@
 terraform {
+  backend "s3" {
+    bucket       = "devops-vle-terraform-state-netragupta"
+    key          = "devops-vle/terraform.tfstate"
+    region       = "ap-south-1"
+    use_lockfile = true
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -32,7 +39,6 @@ data "aws_ami" "ubuntu" {
 
 # Security Group
 resource "aws_security_group" "devops_sg" {
-
   name = "devops-lab-security-group"
 
   # SSH
@@ -82,7 +88,6 @@ resource "aws_security_group" "devops_sg" {
 
 # EC2 Instance
 resource "aws_instance" "devops_server" {
-
   ami           = data.aws_ami.ubuntu.id
   instance_type = "t3.small"
 
