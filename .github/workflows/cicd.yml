@@ -1,0 +1,177 @@
+name: DevOps CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------
+      # 1. Checkout GitHub repository
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # 2. Configure AWS credentials
+      # --------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      # --------------------------------------------------
+      # 3. Setup Terraform
+      # --------------------------------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # --------------------------------------------------
+      # 4. Terraform Init
+      # --------------------------------------------------
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      # --------------------------------------------------
+      # 5. Terraform Apply
+      # --------------------------------------------------
+      - name: Terraform Apply
+        run: terraform -chdir=terraform apply -auto-approve
+
+      # --------------------------------------------------
+      # 6. Get EC2 public IP
+      # --------------------------------------------------
+      - name: Get EC2 Public IP
+        id: terraform_output
+        run: |
+          echo "EC2_IP=$(terraform -chdir=terraform output -raw public_ip)" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 7. Install Ansible
+      # --------------------------------------------------
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      # --------------------------------------------------
+      # 8. Configure SSH key
+      # --------------------------------------------------
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/devops-lab-key.pem
+
+          chmod 600 ~/.ssh/devops-lab-key.pem
+
+          ssh-keyscan -H "$EC2_IP" >> ~/.ssh/known_hosts
+
+      # --------------------------------------------------
+      # 9. Create Ansible inventory dynamically
+      # --------------------------------------------------
+      - name: Create Ansible inventory
+        run: |
+          cat > ansible/inventory.ini <<EOF
+          [servers]
+          devops_server ansible_host=$EC2_IP ansible_user=ubuntu ansible_ssh_private_key_file=$HOME/.ssh/devops-lab-key.pem
+          EOF
+
+          cat ansible/inventory.ini
+
+      # --------------------------------------------------
+      # 10. Configure EC2 using Ansible
+      # --------------------------------------------------
+      - name: Run Ansible
+        run: |
+          ansible-playbook \
+            -i ansible/inventory.ini \
+            ansible/setup.yml
+
+      # --------------------------------------------------
+      # 11. Copy application to EC2
+      # --------------------------------------------------
+      - name: Copy application to EC2
+        run: |
+          scp -i ~/.ssh/devops-lab-key.pem \
+            -o StrictHostKeyChecking=no \
+            -r app ubuntu@$EC2_IP:/home/ubuntu/
+
+      # --------------------------------------------------
+      # 12. Copy Kubernetes manifests to EC2
+      # --------------------------------------------------
+      - name: Copy Kubernetes manifests
+        run: |
+          scp -i ~/.ssh/devops-lab-key.pem \
+            -o StrictHostKeyChecking=no \
+            -r k8s ubuntu@$EC2_IP:/home/ubuntu/
+
+      # --------------------------------------------------
+      # 13. Build Docker image and deploy to Kubernetes
+      # --------------------------------------------------
+      - name: Build and Deploy Application
+        run: |
+          ssh -i ~/.ssh/devops-lab-key.pem \
+            -o StrictHostKeyChecking=no \
+            ubuntu@$EC2_IP <<'EOF'
+
+            set -e
+
+            echo "===== Checking Minikube ====="
+
+            if ! minikube status >/dev/null 2>&1; then
+              echo "Starting Minikube..."
+              minikube start --driver=docker --cpus=2 --memory=1800m
+            else
+              echo "Minikube is already running."
+            fi
+
+            echo "===== Building Docker Image ====="
+
+            cd /home/ubuntu/app
+
+            docker build -t devops-lab-app:latest .
+
+            echo "===== Loading Image into Minikube ====="
+
+            minikube image load devops-lab-app:latest
+
+            echo "===== Deploying Kubernetes Application ====="
+
+            minikube kubectl -- apply -f /home/ubuntu/k8s/deployment.yml
+            minikube kubectl -- apply -f /home/ubuntu/k8s/service.yml
+
+            echo "===== Waiting for Deployment ====="
+
+            minikube kubectl -- rollout status deployment/devops-app
+
+            echo "===== Kubernetes Pods ====="
+
+            minikube kubectl -- get pods
+
+            echo "===== Kubernetes Service ====="
+
+            minikube kubectl -- get svc devops-service
+
+            echo "===== Deployment Successful ====="
+
+          EOF
+
+      # --------------------------------------------------
+      # 14. Display final Terraform output
+      # --------------------------------------------------
+      - name: Display EC2 Information
+        run: |
+          echo "====================================="
+          echo " CI/CD PIPELINE COMPLETED SUCCESSFULLY"
+          echo "====================================="
+          echo "EC2 Public IP: $EC2_IP"
+          echo "====================================="
