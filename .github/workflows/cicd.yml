@@ -62,18 +62,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ansible
 
-      # --------------------------------------------------
+            # --------------------------------------------------
       # 8. Configure SSH key
       # --------------------------------------------------
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/devops-lab-key.pem
-
+          echo "${{ secrets.EC2_SSH_KEY_B64 }}" | base64 --decode > ~/.ssh/devops-lab-key.pem
           chmod 600 ~/.ssh/devops-lab-key.pem
-
           ssh-keyscan -H "$EC2_IP" >> ~/.ssh/known_hosts
+
+      # --------------------------------------------------
+      # 8.1 Validate SSH key
+      # --------------------------------------------------
+      - name: Validate SSH key
+        run: |
+          ssh-keygen -y -f ~/.ssh/devops-lab-key.pem > /dev/null
+          echo "SSH private key is valid"
 
       # --------------------------------------------------
       # 9. Create Ansible inventory dynamically
